@@ -4,9 +4,11 @@ import sys
 import socket
 import time
 import select
+from websocket import create_connection
+from multiprocessing import Process, Queue
 
 host = '127.0.0.1'
-BASEPORT = 50000
+BASEPORT = 5000
 
 # Global Setup
 myid, succ1, succ2, pred1, pred2, timeout1, timeout2 = None, None, None, None, None, None, None
@@ -14,6 +16,11 @@ udp, tcp = None, None
 pingTime = 10
 seqNo1, seqNo2 = 0, 0
 pingSeq1, pingSeq2 = [], []
+
+testsocket1, testsocket2 = None, None
+storage = []
+
+q = None
 
 
 '''
@@ -158,8 +165,80 @@ def ungracefulQuit(receiver):
 	tcpQuit.close()
 
 
+def reconnect1():
+	global testsocket1
+	t = time.time()
+	timeout = t + 100
+	while t < timeout:
+		try:
+			testsocket1 = create_connection("ws://localhost:9999")
+			print('reconnect success')
+			break
+		except:
+			t = time.time()
+			continue
+
+def reconnect2():
+	global testsocket2
+	t = time.time()
+	timeout = t + 100
+	while t < timeout:
+		try:
+			testsocket2 = create_connection("ws://localhost:9999")
+			print('reconnect success')
+			break
+		except:
+			t = time.time()
+			continue
+
+def RecvWebsocket():
+	try:
+		data = testsocket1.recv()
+		print('recieved in testsocket1', data)
+	except:
+		print('attempting to reconnect 1')
+		reconnect1()
+
+
+def SendWebsocket():
+	# msg = [i for i in range(1000)]
+	global q
+	if True:
+		while not q.empty():
+			m = str(q.get())
+			try:
+				print('trying to send', m)
+				testsocket2.send(m)
+				print('success')
+			except:
+				print('attempting to reconnect 2')
+				reconnect2()
+				print('success')
+				print('trying to send', m)
+				testsocket2.send(m)
+				print('success')
+		time.sleep(1)
+
+
+def fakeq():
+	global q
+	print('start putting things into fake q')
+	for i in range(1000):
+		print('putting into q:', i)
+		q.put(i)
+		time.sleep(0.5)
+
+
+
+
 def main():
-	global myid, succ1, succ2, tcp, udp, seqNo1, seqNo2, pingSeq1, pingSeq2
+	global myid, succ1, succ2, tcp, udp, seqNo1, seqNo2, pingSeq1, pingSeq2, testsocket1, testsocket2
+	global q
+	q = Queue()
+	fake = Process(target=fakeq)
+	fake.start()
+
+
 
 	# Setup
 	myid, succ1, succ2 = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -172,6 +251,9 @@ def main():
 	tcp.bind((host, BASEPORT + int(myid)))
 	tcp.listen(5)
 	tcp.setblocking(0)
+
+	testsocket1 = create_connection("ws://localhost:9999")
+	testsocket2 = create_connection("ws://localhost:9999")
 
 	# Start loop
 	while True:
@@ -200,12 +282,16 @@ def main():
 					print('Invalid command: {}'.format(line))
 		
 		# read from tcp and udp socket # Select module Docs: https://pymotw.com/2/select/  made modification so that it read from tcp and udp instead and set timeout to 0.0
-		sockets, _, _ = select.select([tcp, udp], [], [], 0.0)
+		sockets, _, _ = select.select([testsocket1, testsocket2, tcp, udp], [], [], 0.0)
 		for sock in sockets:
 			if sock == udp:
 				UDPreceiver()
 			elif sock == tcp:
 				TCPreceiver()
+			elif sock == testsocket1:
+				RecvWebsocket()
+			elif sock == testsocket2:
+				SendWebsocket()
 
 		# send ping periodically
 		if not int(time.time())%pingTime:
