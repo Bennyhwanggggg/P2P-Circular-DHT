@@ -1,5 +1,3 @@
-# COMP9331 Assignment by Kuan-Chun Hwang z5175539
-
 import sys
 import socket
 import time
